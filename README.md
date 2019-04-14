@@ -30,9 +30,9 @@ Video: www.youtube.com/watch?v=mLdNwHl9cgo&feature=youtu.be
 
 
 ## Examples
-### Map of the office
+### Office map
 ![map](img/map.png)
-### Nao carring jetson
+### NAO with Nvidia JetsonTX2 module
 ![nao](img/world.png)
 
 ## Reference
