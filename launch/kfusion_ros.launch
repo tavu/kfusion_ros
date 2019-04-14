@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>    
+    <node name="kfusion" pkg="kfusion_ros" type="kfusion_node" output="screen">
+        <rosparam file="$(find kfusion_ros)/config/calibration.yaml" command="load"/> 
+  <param name="odom_input_topic" type="string" value="/SERoW/odom" />  
+   <!--    <param name="odom_input_topic" type="string" value="/kfusion/odom" />  -->
+        <param name="odom_delay" type="int" value="3" />
+        <param name="publish_volume" type="bool" value="true" />
+        <param name="publish_points" type="bool" value="true" />
+        <param name="publish_points_rate" type="int" value="20" />
+    </node>    
+</launch>
