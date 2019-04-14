@@ -10,6 +10,8 @@ Video: www.youtube.com/watch?v=mLdNwHl9cgo&feature=youtu.be
 * Ubuntu 16.04 and later
 * ROS kinetic and later
 * Eigen 3 and later
+* Toon
+* Cuda
 
 
 ## Installing
