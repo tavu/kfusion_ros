@@ -10,6 +10,10 @@ find_package(catkin REQUIRED COMPONENTS
   tf2
 )
 
+catkin_package(
+CATKIN_DEPENDS
+)
+
 find_package(TooN   REQUIRED)
 find_package(Eigen3   REQUIRED)
 
