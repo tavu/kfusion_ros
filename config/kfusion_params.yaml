@@ -1,0 +1,10 @@
+compute_size_ratio: 1
+integration_rate: 1
+rendering_rate: 1
+tracking_rate: 1
+volume_resolution: [256,256,256]
+volume_direction: [4.0,4.0,4.0]
+volume_size: [8,8,8]
+pyramid: [10,5,4]
+mu: 0.1
+icp_threshold: 5.0e-01

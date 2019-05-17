@@ -3,31 +3,20 @@
 #include <std_msgs/String.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud.h>
-#include <sensor_msgs/ChannelFloat32.h>
 #include <geometry_msgs/Point32.h>
+#include <geometry_msgs/PoseStamped.h>
 
 #include <image_transport/image_transport.h>
-// #include <message_filters/subscriber.h>
-// #include <message_filters/time_synchronizer.h>
 #include <nav_msgs/Odometry.h>
 #include <string.h>
-// #include <sensor_msgs/image_encodings.h>
 #include <kernels.h>
 
 #include <tf/LinearMath/Matrix3x3.h>
-//#include <tf/btMatrix3x3.h>
-//#include <tf/LinearMath/btMatrix3x3.h>
-//#include<tf/tf.h>
-//#include <tf/transform_datatypes.h>
 
-// #define CAM_INFO_TOPIC "/zed/depth/camera_info"
-// #define RGB_TOPIC "/zed/rgb/image_raw_color"
-// #define DEPTH_TOPIC "/zed/depth/depth_registered"
-
-//#define CAM_INFO_TOPIC "/camera/depth/camera_info"
-//#define DEPTH_TOPIC "/camera/depth/image"
-//#define RGB_TOPIC "/camera/rgb/image_color"
-
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer_interface.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <sensor_msgs/CameraInfo.h>
 
 #define CAM_INFO_TOPIC "/camera/depth/camera_info"
 #define RGB_TOPIC "/camera/rgb/image_rect_color"
@@ -36,6 +25,11 @@
 #define PUB_VOLUME_TOPIC "/kfusion/volume_rendered"
 #define PUB_ODOM_TOPIC "/kfusion/odom"
 #define PUB_POINTS_TOPIC "/kfusion/pointCloud"
+
+#define DEPTH_FRAME "camera_rgb_optical_frame"
+#define VO_FRAME "visual_odom"
+#define ODOM_FRAME "odom"
+#define BASE_LINK "base_link"
 
 #define PUBLISH_POINT_RATE 10
 
@@ -60,6 +54,7 @@ typedef struct
     float4 camera;
     
 } kparams_t;
+kparams_t params;
 
 //Buffers
 uint16_t *inputDepth=0;
@@ -69,13 +64,18 @@ uchar4 *depthRender;
 uchar4 *trackRender;
 uchar4 *volumeRender;
 
-kparams_t params;
+//KFusion
 Kfusion *kfusion=nullptr;
+
+
+std::string odom_in_topic;
 
 int frame = 0;
 int odom_delay;
 int odom_rec=0;
 int odom_counter = 0;
+
+//other params
 bool publish_volume=true;
 bool publish_points=true;
 int publish_points_rate;
@@ -86,12 +86,41 @@ ros::Publisher volume_pub;
 ros::Publisher odom_pub ;
 ros::Publisher points_pub;
 nav_msgs::Odometry odom_;
-Matrix4 T_B_P;
+
+//hold previous pose
+Matrix4 pose_old;
+bool hasPoseOld=false;
+
+//frames
+std::string depth_frame,vo_frame,base_link_frame,odom_frame;
+
+//Transformations
+geometry_msgs::TransformStamped odom_to_vo,vo_to_odom;
+geometry_msgs::TransformStamped cam_to_base,base_to_cam;
+tf2_ros::Buffer tfBuffer;
+
 //functions
 void initKFusion();
 void publishVolume();
 void publishOdom();
 void publishPoints();
+geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans);
+
+
+geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans)
+{
+    geometry_msgs::Pose pose;
+    pose.position.x=trans.translation.x;
+    pose.position.y=trans.translation.y;
+    pose.position.z=trans.translation.z;
+
+    pose.orientation.x=trans.rotation.x;
+    pose.orientation.y=trans.rotation.y;
+    pose.orientation.z=trans.rotation.z;
+    pose.orientation.w=trans.rotation.w;
+
+    return pose;
+}
 
 void readKfusionParams(ros::NodeHandle &n_p)
 {   
@@ -117,60 +146,59 @@ void readKfusionParams(ros::NodeHandle &n_p)
     
     n_p.getParam("mu",par.mu);
     n_p.getParam("icp_threshold",par.icp_threshold);
-    /*
-    kparams_t par;
-    n_p.getParam("compute_size_ratio",par.compute_size_ratio);
-    n_p.getParam("integration_rate",par.integration_rate);
-    n_p.getParam("rendering_rate",par.rendering_rate);
-    n_p.getParam("tracking_rate",par.tracking_rate);
-    n_p.getParam("volume_resolution",par.volume_resolution);
-    n_p.getParam("volume_direction",par.volume_direction);
-//     std::vector<double> pose_list;
-    
-    n_p.getParam("volume_size",par.volume_size);
-    n_p.getParam("pyramid",par.pyramid);
-    n_p.getParam("mu",par.mu);
-    n_p.getParam("icp_threshold",par.icp_threshold);
-    */
+
     params=par;
 }
 
-void odomCallback(const nav_msgs::Odometry &odom)
+void odomCallback(nav_msgs::OdometryConstPtr odom)
 {
-    ROS_INFO("odom %d",odom_rec);
-
-    if(kfusion==nullptr)
-        return;
-    
+    ROS_DEBUG("odom %d",odom_rec);
     if(odom_rec!=odom_delay)
     {
         odom_rec++; 
         return;
     }
-    ROS_INFO("odomsdf");
-         
     odom_rec++; 
 
 
-    if(odom_counter==0)
-    {
-        odom_counter++;
-        odom_ = odom;
+    geometry_msgs::Pose odomP;
+    geometry_msgs::Pose poseTmp;
 
+    /*Create tf transformation from odom message*/
+    geometry_msgs::TransformStamped base_to_odom;
+    base_to_odom.header.frame_id=odom_frame;
+    base_to_odom.child_frame_id=base_link_frame;
+    
+    base_to_odom.transform.translation.x=odom->pose.pose.position.x;
+    base_to_odom.transform.translation.y=odom->pose.pose.position.y;
+    base_to_odom.transform.translation.z=odom->pose.pose.position.z;
+    
+    base_to_odom.transform.rotation.x=odom->pose.pose.orientation.x;
+    base_to_odom.transform.rotation.y=odom->pose.pose.orientation.y;
+    base_to_odom.transform.rotation.z=odom->pose.pose.orientation.z;
+    base_to_odom.transform.rotation.w=odom->pose.pose.orientation.w;
+    
+
+    odomP=transform2pose(cam_to_base.transform);
+    try
+    {
+        tf2::doTransform(odomP,odomP, base_to_odom);
+        tf2::doTransform(odomP,odomP, odom_to_vo);
+    }
+    catch (tf2::TransformException &ex) 
+    {
+        
+        ROS_WARN("Odom transformation failure %s\n", ex.what()); //Print exception which was caught    
         return;
     }
 
-
-   
-    Matrix4 pose, pose_, delta_pose;
-    
-
+    Matrix4 pose, delta_pose;
 
     //New Odometry
-    tf::Quaternion q(odom.pose.pose.orientation.x,
-                     odom.pose.pose.orientation.y,
-                     odom.pose.pose.orientation.z,
-                     odom.pose.pose.orientation.w);
+    tf::Quaternion q(odomP.orientation.x,
+                     odomP.orientation.y,
+                     odomP.orientation.z,
+                     odomP.orientation.w);
 
     
    tf::Matrix3x3 rot_matrix(q);
@@ -188,71 +216,43 @@ void odomCallback(const nav_msgs::Odometry &odom)
     pose.data[3].z=0;
     pose.data[3].w=1;
 
-
-    pose.data[0].w=odom.pose.pose.position.x;
-    pose.data[1].w=odom.pose.pose.position.y;
-    pose.data[2].w=odom.pose.pose.position.z;
-
-
     
-
-    //Old Odometry
-
-    tf::Quaternion q_(odom_.pose.pose.orientation.x,
-                     odom_.pose.pose.orientation.y,
-                     odom_.pose.pose.orientation.z,
-                     odom_.pose.pose.orientation.w);
-
+    pose.data[0].w=odomP.position.x;
+    pose.data[1].w=odomP.position.y; 
+    pose.data[2].w=odomP.position.z;
+        
+    pose.data[0].w += params.volume_direction.x;
+    pose.data[1].w += params.volume_direction.y;
+    pose.data[2].w += params.volume_direction.z;
     
-   tf::Matrix3x3 rot_matrix_(q_);
-
-    for(int i=0;i<3;i++)
+    
+    if(!hasPoseOld)
     {
-        tf::Vector3 vec=rot_matrix_.getRow(i);
-        pose_.data[i].x=vec.getX();
-        pose_.data[i].y=vec.getY();
-        pose_.data[i].z=vec.getZ();
-        pose_.data[i].w=0;
+        pose_old=pose;
+        hasPoseOld=true;
+        return;
     }
-    pose_.data[3].x=0;
-    pose_.data[3].y=0;
-    pose_.data[3].z=0;
-    pose_.data[3].w=1;
-    pose_.data[0].w=odom_.pose.pose.position.x;
-    pose_.data[1].w=odom_.pose.pose.position.y;
-    pose_.data[2].w=odom_.pose.pose.position.z;
- 
-    pose = T_B_P * pose;
-    pose_ = T_B_P * pose_;
-    //delta_pose =  inverse(pose_) * pose;
-    delta_pose =  pose *  inverse(pose_);
-
-
+    if(kfusion==nullptr)
+        return;    
     
-
+    delta_pose = inverse(pose_old) * pose;
+    pose_old=pose;
+    hasPoseOld=true;
 
     Matrix4 p=kfusion->getPose();
-
-   Matrix4 p_new = p * delta_pose;
-
-   for(int i=0;i<4;i++)
-   {
-         std::cout<<p.data[i].x<<" "<<p.data[i].y<<" "<<p.data[i].z<<" "<<p.data[i].w<<std::endl;
-        std::cout<<p_new.data[i].x<<" "<<p_new.data[i].y<<" "<<p_new.data[i].z<<" "<<p_new.data[i].w<<std::endl;
-       
-     }
-
-
+    Matrix4 p_new = kfusion->getPose() * delta_pose;
 
     kfusion->setPose(p_new);
+
     //Integrate
     if(!kfusion->integration(params.camera,
                              params.integration_rate,
                              params.mu, frame))
         ROS_ERROR("integration faild");
 
+    //Raycasting
     kfusion->raycasting(params.camera, params.mu, frame);
-        
+
     if(publish_volume)
     {
         kfusion->renderVolume(volumeRender,
@@ -267,19 +267,13 @@ void odomCallback(const nav_msgs::Odometry &odom)
     
     if(publish_points && frame % publish_points_rate ==0)
          publishPoints();
-     
-    frame++;    
-    odom_ = odom;
-    
+
+    frame++;
 }
 
 void depthCallback(const sensor_msgs::ImageConstPtr &depth)
 {
-    static bool first_time=true;
-    params.inputSize.y=depth->height;
-    params.inputSize.x=depth->width;
-
-    if(kfusion==0)
+    if(kfusion==0 )
     {
         params.inputSize.y=depth->height;
         params.inputSize.x=depth->width;
@@ -309,21 +303,18 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
         return;
     }
         
-    if(!kfusion->tracking(params.camera,
+    bool track_success=kfusion->tracking(params.camera,
                       params.icp_threshold,
-                      params.tracking_rate, frame) )
-    {
-       ROS_ERROR("Tracking faild");
-    }
-    
-    
-    publishOdom();
+                      params.tracking_rate, frame);
     odom_rec=0;
+    if(! track_success)
+       ROS_ERROR("Tracking faild");
+    else
+        publishOdom();
 }
 
 void camInfoCallback(sensor_msgs::CameraInfoConstPtr msg)
 {
-    ROS_INFO("cam info");
     params.camera =  make_float4(msg->K[0],msg->K[4],msg->K[2],msg->K[5]);
 }
 
@@ -356,8 +347,8 @@ void initKFusion()
     poseMatrix.data[0].w =  0;
     poseMatrix.data[1].w =  0;
     poseMatrix.data[2].w =  0;
-    poseMatrix.data[3].w =  1;    
-
+    poseMatrix.data[3].w =  1;
+    
     poseMatrix.data[0].w +=  params.volume_direction.x;
     poseMatrix.data[1].w +=  params.volume_direction.y;
     poseMatrix.data[2].w +=  params.volume_direction.z;
@@ -395,8 +386,7 @@ void publishVolume()
 
 void publishOdom()
 {
-    Matrix4 pose = kfusion->getPose();
-
+    Matrix4 pose =  kfusion->getPose();
     tf::Vector3 vec[3];
     for(int i=0;i<3;i++)
     {
@@ -408,30 +398,47 @@ void publishOdom()
                              vec[2].getX(),vec[2].getY(),vec[2].getZ() );
 
     tf::Quaternion q;
-
     rot_matrix.getRotation(q);
 
     nav_msgs::Odometry odom;
+    geometry_msgs::Pose odom_pose;
+    geometry_msgs::TransformStamped cam_to_vo;
+    cam_to_vo.header.frame_id=depth_frame;
+    cam_to_vo.child_frame_id=base_link_frame;
+
     odom.header.stamp = ros::Time::now();
-    odom.header.frame_id = "kfusion_odom";
 
-    //set the position
-    odom.pose.pose.position.x = pose.data[0].w-params.volume_direction.x;
-    odom.pose.pose.position.y = pose.data[1].w-params.volume_direction.y;
-    odom.pose.pose.position.z = pose.data[2].w-params.volume_direction.z;
+    cam_to_vo.transform.translation.x = pose.data[0].w-params.volume_direction.x;
+    cam_to_vo.transform.translation.y = pose.data[1].w-params.volume_direction.y;
+    cam_to_vo.transform.translation.z = pose.data[2].w-params.volume_direction.z;
 
-    //set quaternion
-    odom.pose.pose.orientation.x=q.getX();
-    odom.pose.pose.orientation.y=q.getY();
-    odom.pose.pose.orientation.z=q.getZ();
-    odom.pose.pose.orientation.w=q.getW();
+    cam_to_vo.transform.rotation.x=q.getX();
+    cam_to_vo.transform.rotation.y=q.getY();
+    cam_to_vo.transform.rotation.z=q.getZ();
+    cam_to_vo.transform.rotation.w=q.getW();
 
-    //set velocity to zero
-    odom.child_frame_id = "base_link";
+    //set velocity to zero    
     odom.twist.twist.linear.x = 0;
     odom.twist.twist.linear.y = 0;
     odom.twist.twist.angular.z = 0;
+    
+    odom.header.frame_id = odom_frame;
+    odom.child_frame_id = "visual_link";
 
+    odom_pose=transform2pose(base_to_cam.transform);
+    try
+    {
+        tf2::doTransform(odom_pose,odom_pose, cam_to_vo);
+        tf2::doTransform(odom_pose,odom_pose, vo_to_odom);
+    }
+    catch (tf2::TransformException &ex)
+    {
+
+        ROS_WARN("Odom transformation failure %s\n", ex.what()); //Print exception which was caught
+        return;
+    }
+
+    odom.pose.pose=odom_pose;
     odom_pub.publish(odom);
 }
 
@@ -442,25 +449,38 @@ void publishPoints()
     
     sensor_msgs::PointCloud pcloud;
     pcloud.header.stamp = ros::Time::now();
-    pcloud.header.frame_id = "odom";
+    pcloud.header.frame_id = odom_frame;
     pcloud.points.reserve(vertices.size());
-    sensor_msgs::ChannelFloat32 ch;
-    
-//     pcloud.channels.reserve(vertices.size());
+    sensor_msgs::ChannelFloat32 ch;    
     
     for(int i=0;i<vertices.size();i++)
     {
         float3 vertex=vertices[i];
+        geometry_msgs::Point point;
+
+        point.x= vertex.x -params.volume_direction.x;
+        point.y= vertex.y -params.volume_direction.y;
+        point.z= vertex.z -params.volume_direction.z;
+
+        try
+        {
+            tf2::doTransform(point,point, vo_to_odom);
+        }
+        catch (tf2::TransformException &ex)
+        {
+
+            ROS_WARN("Odom transformation failure %s\n", ex.what()); //Print exception which was caught
+            return;
+        }
+
         geometry_msgs::Point32 p;
+        p.x=point.x;
+        p.y=point.y;
+        p.z=point.z;
 
-
-        p.x= vertex.z -params.volume_direction.z;
-        p.y= -vertex.x +params.volume_direction.x;
-        p.z= -vertex.y +params.volume_direction.y;
         pcloud.points.push_back(p);
         ch.values.push_back(1);    
     }
-    
     pcloud.channels.push_back(ch);
     points_pub.publish(pcloud);
 }
@@ -469,7 +489,8 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "kfusion_node",ros::init_options::AnonymousName);
     ros::NodeHandle n_p("~");
-    std::string cam_info_topic,depth_topic,rgb_topic,odom_in_topic;
+
+    std::string cam_info_topic,depth_topic,rgb_topic;
     if(!n_p.getParam("cam_info_topic", cam_info_topic))
     {
         cam_info_topic=std::string(CAM_INFO_TOPIC);
@@ -502,27 +523,37 @@ int main(int argc, char **argv)
     {
         publish_points_rate=PUBLISH_POINT_RATE;
     } 
-    readKfusionParams(n_p);
-    
-    std::vector<double> pose_list;
-    n_p.getParam("T_B_P",pose_list);
- std::cout<<" TB B"<<std::endl;
-
-    for(int i = 0; i<4; i++)
+    if(!n_p.getParam("vo_frame", vo_frame))
     {
-        T_B_P.data[i].x = pose_list[4*i];
-        T_B_P.data[i].y = pose_list[4*i+1];
-        T_B_P.data[i].z = pose_list[4*i+2];
-        T_B_P.data[i].w = pose_list[4*i+3];
-        std::cout<<T_B_P.data[i].x<<" "<<T_B_P.data[i].y<<" "<<T_B_P.data[i].z<<" "<<T_B_P.data[i].w<<std::endl;
+        vo_frame=VO_FRAME;
+    }    
+    if(!n_p.getParam("depth_frame", depth_frame))
+    {
+        depth_frame=DEPTH_FRAME;
+    }
+    if(!n_p.getParam("base_link_frame", base_link_frame))
+    {
+        base_link_frame=BASE_LINK;
+    }
+    if(!n_p.getParam("odom_frame", odom_frame))
+    {
+        odom_frame=ODOM_FRAME;
     }
 
 
+    ROS_INFO("Depth Frame:%s",depth_frame.c_str());
+           
+    readKfusionParams(n_p);
+    
+    if(publish_volume)
+        volume_pub = n_p.advertise<sensor_msgs::Image>(PUB_VOLUME_TOPIC, 1000);
 
-    volume_pub = n_p.advertise<sensor_msgs::Image>(PUB_VOLUME_TOPIC, 1000);    
+    if(publish_points)
+        points_pub = n_p.advertise<sensor_msgs::PointCloud>(PUB_POINTS_TOPIC, 100);
+
     odom_pub = n_p.advertise<nav_msgs::Odometry>(PUB_ODOM_TOPIC, 50);
-    points_pub = n_p.advertise<sensor_msgs::PointCloud>(PUB_POINTS_TOPIC, 100);
 
+    ROS_INFO("Waiting camera info");
     while(ros::ok())
     {
         sensor_msgs::CameraInfoConstPtr cam_info=ros::topic::waitForMessage<sensor_msgs::CameraInfo>(cam_info_topic);
@@ -533,22 +564,40 @@ int main(int argc, char **argv)
         }
     }
 
+    ROS_INFO("Waiting tf transformation");
+    do
+    {
+        tf2_ros::TransformListener tfListener(tfBuffer);        
+        while(true)
+        {
+            try
+            {
+                odom_to_vo = tfBuffer.lookupTransform(depth_frame,odom_frame, ros::Time(0));
+                cam_to_base = tfBuffer.lookupTransform(base_link_frame,depth_frame, ros::Time(0));
+                break;
+            }
+            catch (tf2::TransformException &ex) 
+            {
+                ROS_WARN("Failure %s\n", ex.what()); //Print exception which was caught    
+                ros::Duration(0.2).sleep();
+            }
+        }        
+        
+        tf2::Transform tr;
+        tf2::fromMsg(odom_to_vo.transform,tr);
+        tr=tr.inverse();
+        vo_to_odom.transform=tf2::toMsg(tr);
+
+        tf2::fromMsg(cam_to_base.transform,tr);
+        tr=tr.inverse();
+        base_to_cam.transform=tf2::toMsg(tr);
+    }while(false);
+
+    ros::Subscriber odom_sub = n_p.subscribe(odom_in_topic, odom_delay+1, odomCallback);
+    ROS_INFO("Waiting depth message");
+
     image_transport::ImageTransport it(n_p);
     image_transport::Subscriber sub = it.subscribe(depth_topic, 1, depthCallback);
-    ros::Subscriber odom_sub = n_p.subscribe(odom_in_topic, 1, odomCallback);
-
-//    cam_info_sub = n_p.subscribe(cam_info_topic, 1, camInfoCallback);
-
-//    params.camera =  make_float4(msg.K[0],msg.K[4],msg.K[2],msg.K[5]);
-
-//     message_filters::Subscriber<sensor_msgs::Image> rgb_sub(n_p, rgb_topic, 2);
     
-    /*
-    message_filters::Subscriber<sensor_msgs::Image> rgb_sub(n_p, rgb_topic, 1);
-    message_filters::Subscriber<sensor_msgs::Image> depth_sub(n_p, depth_topic, 1);
-    message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::Image> sync(rgb_sub, depth_sub, 2);
-    sync.registerCallback(boost::bind(&frameCallback, _1, _2));
-    */
-
     ros::spin();
 }

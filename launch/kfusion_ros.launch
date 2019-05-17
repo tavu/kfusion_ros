@@ -1,10 +1,15 @@
 <?xml version="1.0"?>
 <launch>    
+        
+<!--     static_transform_publisher x y z qx qy qz qw frame_id child_frame_id  period_in_ms -->
+     <node pkg="tf" type="static_transform_publisher" name="tf_base_link_to_torso" args="0 0 0   0 0 0 1 base_link torso 100" /> 
+     <node pkg="tf" type="static_transform_publisher" name="tf_head_to_cam" args="0 0 0.1 0 0 0 1 Head camera_rgb_frame 1000" /> 
+    
     <node name="kfusion" pkg="kfusion_ros" type="kfusion_node" output="screen">
         <rosparam file="$(find kfusion_ros)/config/calibration.yaml" command="load"/> 
-  <param name="odom_input_topic" type="string" value="/SERoW/odom" />  
-   <!--    <param name="odom_input_topic" type="string" value="/kfusion/odom" />  -->
-        <param name="odom_delay" type="int" value="3" />
+<!-- -   <param name="odom_input_topic" type="string" value="/SERoW/odom" />    -->
+        <param name="odom_input_topic" type="string" value="/kfusion/odom" /> 
+        <param name="odom_delay" type="int" value="0" />
         <param name="publish_volume" type="bool" value="true" />
         <param name="publish_points" type="bool" value="true" />
         <param name="publish_points_rate" type="int" value="20" />
