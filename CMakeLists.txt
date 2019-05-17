@@ -8,6 +8,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   image_transport
   tf2
+  tf2_ros
 )
 
 find_package(TooN   REQUIRED)
@@ -16,13 +17,11 @@ find_package(Eigen3   REQUIRED)
 #set(TOON_INCLUDE_PATHS "~/src/TooN")
 #set(EIGEN3_INCLUDE_DIR "~/src/eigen")
 
-
-
-
 find_package(CUDA)
 SET( CUDA_PROPAGATE_HOST_FLAGS OFF ) 
 set(kfusion_cuda_srcs src/kernels.cu)
-    cuda_add_library(kfusion_cuda    SHARED  ${kfusion_cuda_srcs}  OPTIONS -O3 -std=c++11 -Xcompiler -fPIC -D_MWAITXINTRIN_H_INCLUDED -D_FORCE_INLINES 
+
+cuda_add_library(kfusion_cuda    SHARED  ${kfusion_cuda_srcs}  OPTIONS -O3 -std=c++11 -Xcompiler -fPIC -D_MWAITXINTRIN_H_INCLUDED -D_FORCE_INLINES 
     -I${CMAKE_CURRENT_SOURCE_DIR}/src/cuda_headers 
     -I${CMAKE_CURRENT_SOURCE_DIR}/src 
     -I${TOON_INCLUDE_PATHS}
@@ -40,8 +39,6 @@ include_directories(
 add_executable( kfusion_node 
     src/kfusion_node.cpp 
 )
-
-
 
 target_link_libraries(kfusion_node
     ${catkin_LIBRARIES}  
