@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<launch>    
+        
+    <node pkg="tf" type="static_transform_publisher" name="tf_base_link_to_torso" args="0 0 0   0 0 0 1 base_link torso 100" /> 
+    <node pkg="tf" type="static_transform_publisher" name="tf_head_to_cam" args="0 0 0.1  0.0 0.076 0.0 0.997 Head camera_rgb_frame 100" />  
+    
+    <node name="kfusion" pkg="kfusion_ros" type="kfusion_node"  output="screen" >
+        <rosparam file="$(find kfusion_ros)/config/kfusion_params.yaml" command="load"/> 
+        <param name="odom_input_topic" type="string" value="/SERoW/odom" />
+        <param name="base_link_frame" type="string" value="base_link" />  
+        <param name="odom_frame" type="string" value="odom" /> 
+        <param name="odom_delay" type="int" value="1" />
+        <param name="publish_volume" type="bool" value="true" />
+        <param name="publish_points" type="bool" value="true" />
+        <param name="publish_points_rate" type="int" value="10" />
+        <param name="vo_frame" type="string" value="visual_odom" />
+        <param name="depth_frame" type="string" value="camera_rgb_optical_frame" />
+    </node>    
+</launch>
