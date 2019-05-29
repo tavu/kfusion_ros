@@ -1,36 +1,8 @@
-/*
-
- Copyright (c) 2011-2013 Gerhard Reitmayr, TU Graz
-
- Copyright (c) 2014 University of Edinburgh, Imperial College, University of Manchester.
- Developed in the PAMELA project, EPSRC Programme Grant EP/K008730/1
-
- This code is licensed under the MIT License.
-
- */
-
 #include <constant_parameters.h>
 #include <kernels.h>
 #include <marching_cube.h>
 
-#ifdef __APPLE__
-#include <mach/clock.h>
-#include <mach/mach.h>
-
-#define TICK(str)    {static const std::string str_tick = str; \
-    if (print_kernel_timing) {\
-    host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &cclock);\
-    clock_get_time(cclock, &tick_clockData);\
-    mach_port_deallocate(mach_task_self(), cclock);\
-    }}
-
-#define TOCK()  {if (print_kernel_timing) {cudaDeviceSynchronize(); \
-    host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &cclock);\
-    clock_get_time(cclock, &tock_clockData);\
-    mach_port_deallocate(mach_task_self(), cclock);\
-    if((tock_clockData.tv_sec > tick_clockData.tv_sec) && (tock_clockData.tv_nsec >= tick_clockData.tv_nsec))   std::cerr<< tock_clockData.tv_sec - tick_clockData.tv_sec << std::setfill('0') << std::setw(9);\
-    std::cerr  << (( tock_clockData.tv_nsec - tick_clockData.tv_nsec) + ((tock_clockData.tv_nsec<tick_clockData.tv_nsec)?1000000000:0)) << std::endl;}}
-#else
+#include<stdio.h>
 
 #define TICK(str)    {static const std::string str_tick = str; \
     if (print_kernel_timing) {clock_gettime(CLOCK_MONOTONIC, &tick_clockData);}
@@ -40,10 +12,6 @@
     std::cerr<< str_tick << " ";\
     if((tock_clockData.tv_sec > tick_clockData.tv_sec) && (tock_clockData.tv_nsec >= tick_clockData.tv_nsec)) std::cerr<< tock_clockData.tv_sec - tick_clockData.tv_sec << std::setfill('0') << std::setw(9);\
     std::cerr  << (( tock_clockData.tv_nsec - tick_clockData.tv_nsec) + ((tock_clockData.tv_nsec<tick_clockData.tv_nsec)?1000000000:0)) << std::endl;}}
-
-#endif
-
-
 
 bool print_kernel_timing = false;
 
@@ -106,29 +74,68 @@ __global__ void renderTrackKernel(Image<uchar4> out,
 __global__ void renderVolumeKernel(Image<uchar4> render, const Volume volume,
                                    const Matrix4 view, const float nearPlane, const float farPlane,
                                    const float step, const float largestep, const float3 light,
-                                   const float3 ambient) {
+                                   const float3 ambient)
+{
     const uint2 pos = thr2pos2();
 
-    float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,
-                         largestep);
-    if (hit.w > 0) {
+    float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,largestep);
+    if (hit.w > 0)
+    {
         const float3 test = make_float3(hit);
         const float3 surfNorm = volume.grad(test);
-        if (length(surfNorm) > 0) {
+        if (length(surfNorm) > 0)
+        {
             const float3 diff = normalize(light - test);
             const float dir = fmaxf(dot(normalize(surfNorm), diff), 0.f);
-            const float3 col = clamp(make_float3(dir) + ambient, 0.f, 1.f)
-                               * 255;
+//            printf("Dir %f\n",dir);
+            const float3 col = clamp(make_float3(dir) + ambient, 0.f, 1.f)* 255;
+
             render.el() = make_uchar4(col.x, col.y, col.z, 0); // The forth value is padding for memory alignement and so it is for following uchar4
-        } else {
+        }
+        else
+        {
             render.el() = make_uchar4(0, 0, 0, 0);
         }
-    } else {
+    }
+    else
+    {
         render.el() = make_uchar4(0, 0, 0, 0);
     }
 }
 
-__global__ void initVolumeKernel(Volume volume, const float2 val) {
+__global__ void renderImageKernel(Image<uchar4> render, const Volume volume,
+                                   const Matrix4 view, const float nearPlane, const float farPlane,
+                                   const float step, const float largestep)
+{    
+    const uint2 pos = thr2pos2();
+    float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,largestep);
+    if (hit.w > 0)
+    {
+        const float3 pos = make_float3(hit);
+        const float3 surfNorm = volume.grad(pos);
+        if (length(surfNorm) > 0)
+        {
+
+            const float3 pos = make_float3(hit);            
+            const float3 frgb = volume.rgb_interp( make_float3(pos.x,pos.y,pos.z) );
+            render.el()=make_uchar4(frgb.x ,
+                                    frgb.y ,
+                                    frgb.z ,
+                                    0);
+        }
+        else
+        {
+            render.el() = make_uchar4(0, 0, 0, 0);
+        }
+    }
+    else
+    {
+        render.el() = make_uchar4(0, 0, 0, 0);
+    }
+}
+
+__global__ void initVolumeKernel(Volume volume, const float2 val)
+{
     uint3 pos = make_uint3(thr2pos2());
     for (pos.z = 0; pos.z < volume.size.z; ++pos.z)
         volume.set(pos, val);
@@ -136,20 +143,26 @@ __global__ void initVolumeKernel(Volume volume, const float2 val) {
 
 __global__ void raycastKernel(Image<float3> pos3D, Image<float3> normal,
                               const Volume volume, const Matrix4 view, const float nearPlane,
-                              const float farPlane, const float step, const float largestep) {
+                              const float farPlane, const float step, const float largestep)
+{
     const uint2 pos = thr2pos2();
+    const float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,largestep);
 
-    const float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,
-                               largestep);
-    if (hit.w > 0) {
+    if (hit.w > 0)
+    {
         pos3D[pos] = make_float3(hit);
         float3 surfNorm = volume.grad(make_float3(hit));
-        if (length(surfNorm) == 0) {
+        if (length(surfNorm) == 0)
+        {
             normal[pos].x = INVALID;
-        } else {
+        }
+        else
+        {
             normal[pos] = normalize(surfNorm);
         }
-    } else {
+    }
+    else
+    {
         pos3D[pos] = make_float3(0);
         normal[pos] = make_float3(INVALID, 0, 0);
     }
@@ -160,55 +173,94 @@ __forceinline__ __device__ float sq(const float x) {
 }
 
 __global__ void integrateKernel(Volume vol, const Image<float> depth,
+                                const Image<uchar3> rgb,
                                 const Matrix4 invTrack, const Matrix4 K, const float mu,
-                                const float maxweight) {
+                                const float maxweight)
+{
     uint3 pix = make_uint3(thr2pos2());
     float3 pos = invTrack * vol.pos(pix);
     float3 cameraX = K * pos;
-    const float3 delta = rotate(invTrack,
-                                make_float3(0, 0, vol.dim.z / vol.size.z));
+    const float3 delta = rotate(invTrack,make_float3(0, 0, vol.dim.z / vol.size.z));
     const float3 cameraDelta = rotate(K, delta);
 
-    for (pix.z = 0; pix.z < vol.size.z; ++pix.z, pos += delta, cameraX +=
-         cameraDelta) {
+    for (pix.z = 0; pix.z < vol.size.z; ++pix.z, pos += delta, cameraX +=cameraDelta)
+    {
         if (pos.z < 0.0001f) // some near plane constraint
             continue;
+
         const float2 pixel = make_float2(cameraX.x / cameraX.z + 0.5f,
                                          cameraX.y / cameraX.z + 0.5f);
-        if (pixel.x < 0 || pixel.x > depth.size.x - 1 || pixel.y < 0
-                || pixel.y > depth.size.y - 1)
+
+        if (pixel.x < 0 || pixel.x > depth.size.x - 1 || pixel.y < 0|| pixel.y > depth.size.y - 1)
             continue;
+
         const uint2 px = make_uint2(pixel.x, pixel.y);
+
         if (depth[px] == 0)
             continue;
-        const float diff = (depth[px] - cameraX.z)
-                           * sqrt(1 + sq(pos.x / pos.z) + sq(pos.y / pos.z));
-        if (diff > -mu) {
+
+        uchar3 col=rgb[px];
+//        float3 col4=make_uchar4(col.x, col.y, col.z, 0);
+
+        const float diff = (depth[px] - cameraX.z) *
+                           sqrt(1 + sq(pos.x / pos.z) + sq(pos.y / pos.z));
+
+        if (diff > -mu)
+        {
             const float sdf = fminf(1.f, diff / mu);
-            float2 data = vol[pix];
-            data.x = clamp((data.y * data.x + sdf) / (data.y + 1), -1.f, 1.f);
-            data.y = fminf(data.y + 1, maxweight);
-            vol.set(pix, data);
+
+            float2 p_data = vol[pix];
+            float3 p_color = vol.getColor(pix);
+
+            float3 frgb = make_float3(rgb[px].x,rgb[px].y,rgb[px].z);
+//            printf("COL %d,%d,%d\n",frgb.x,frgb.y,frgb.z);
+//            uchar4 color=vol.getColor(pix);
+            p_data.x = clamp((p_data.y * p_data.x + sdf) / (p_data.y + 1), -1.f, 1.f);
+
+            frgb.x = (p_color.x * p_data.y + frgb.x ) / (p_data.y + 1.0f);
+            frgb.y = (p_color.y * p_data.y + frgb.y ) / (p_data.y + 1.0f);
+            frgb.z = (p_color.z * p_data.y + frgb.z ) / (p_data.y + 1.0f);
+
+            p_data.y = fminf(p_data.y + 1, maxweight);
+//            printf("w :%f\n",p_data.y);
+
+            vol.set(pix,p_data, frgb);
+
+
+//            vol.set(pix, p_data);
+
+//            vol.set(pix,p_data, col4);
+//            printf("COL %f, %f, %f\n",frgb.x,frgb.y,frgb.z);
+
+//            if(sdf<1.f && sdf>-1.f)
+//            {
+////                printf("sdf %f\n",sdf);
+
+//            }
+//            else
+//                vol.set(pix, data);
         }
     }
 }
 
-__global__ void depth2vertexKernel(Image<float3> vertex,
-                                   const Image<float> depth, const Matrix4 invK) {
+__global__ void depth2vertexKernel(Image<float3> vertex,const Image<float> depth, const Matrix4 invK) 
+{
     const uint2 pixel = thr2pos2();
     if (pixel.x >= depth.size.x || pixel.y >= depth.size.y)
         return;
 
-    if (depth[pixel] > 0) {
-        vertex[pixel] = depth[pixel]
-                        * (rotate(invK, make_float3(pixel.x, pixel.y, 1.f)));
-    } else {
+    if (depth[pixel] > 0)
+    {
+        vertex[pixel] = depth[pixel]*(rotate(invK, make_float3(pixel.x, pixel.y, 1.f)));
+    }
+    else
+    {
         vertex[pixel] = make_float3(0);
     }
 }
 
-__global__ void vertex2normalKernel(Image<float3> normal,
-                                    const Image<float3> vertex) {
+__global__ void vertex2normalKernel(Image<float3> normal,const Image<float3> vertex)
+{
     const uint2 pixel = thr2pos2();
     if (pixel.x >= vertex.size.x || pixel.y >= vertex.size.y)
         return;
@@ -220,7 +272,8 @@ __global__ void vertex2normalKernel(Image<float3> normal,
     const float3 down = vertex[make_uint2(pixel.x,
                                           min(pixel.y + 1, vertex.size.y - 1))];
 
-    if (left.z == 0 || right.z == 0 || up.z == 0 || down.z == 0) {
+    if (left.z == 0 || right.z == 0 || up.z == 0 || down.z == 0)
+    {
         normal[pixel].x = INVALID;
         return;
     }
@@ -238,10 +291,12 @@ __global__ void mm2metersKernel( Image<float> depth, const Image<ushort> in ) {
 
 //column pass using coalesced global memory reads
 __global__ void bilateralFilterKernel(Image<float> out, const Image<float> in,
-                                      const Image<float> gaussian, const float e_d, const int r) {
+                                      const Image<float> gaussian, const float e_d, const int r)
+{
     const uint2 pos = thr2pos2();
 
-    if (in[pos] == 0) {
+    if (in[pos] == 0)
+    {
         out[pos] = 0;
         return;
     }
@@ -250,12 +305,15 @@ __global__ void bilateralFilterKernel(Image<float> out, const Image<float> in,
     float t = 0.0f;
     const float center = in[pos];
 
-    for (int i = -r; i <= r; ++i) {
-        for (int j = -r; j <= r; ++j) {
+    for (int i = -r; i <= r; ++i)
+    {
+        for (int j = -r; j <= r; ++j)
+        {
             const float curPix = in[make_uint2(
                                      clamp(pos.x + i, 0u, in.size.x - 1),
                                      clamp(pos.y + j, 0u, in.size.y - 1))];
-            if (curPix > 0) {
+            if (curPix > 0)
+            {
                 const float mod = sq(curPix - center);
                 const float factor = gaussian[make_uint2(i + r, 0)]
                                      * gaussian[make_uint2(j + r, 0)]
@@ -269,8 +327,8 @@ __global__ void bilateralFilterKernel(Image<float> out, const Image<float> in,
 }
 
 // filter and halfsample
-__global__ void halfSampleRobustImageKernel(Image<float> out,
-                                            const Image<float> in, const float e_d, const int r) {
+__global__ void halfSampleRobustImageKernel(Image<float> out,const Image<float> in, const float e_d, const int r) 
+{
     const uint2 pixel = thr2pos2();
     const uint2 centerPixel = 2 * pixel;
 
@@ -280,13 +338,16 @@ __global__ void halfSampleRobustImageKernel(Image<float> out,
     float sum = 0.0f;
     float t = 0.0f;
     const float center = in[centerPixel];
-    for (int i = -r + 1; i <= r; ++i) {
-        for (int j = -r + 1; j <= r; ++j) {
+    for (int i = -r + 1; i <= r; ++i)
+    {
+        for (int j = -r + 1; j <= r; ++j)
+        {
             float current = in[make_uint2(
                                 clamp(make_int2(centerPixel.x + j, centerPixel.y + i),
                                       make_int2(0),
                                       make_int2(in.size.x - 1, in.size.y - 1)))]; // TODO simplify this!
-            if (fabsf(current - center) < e_d) {
+            if (fabsf(current - center) < e_d)
+            {
                 sum += 1.0f;
                 t += current;
             }
@@ -295,7 +356,8 @@ __global__ void halfSampleRobustImageKernel(Image<float> out,
     out[pixel] = t / sum;
 }
 
-__global__ void generate_gaussian(Image<float> out, float delta, int radius) {
+__global__ void generate_gaussian(Image<float> out, float delta, int radius)
+{
     int x = threadIdx.x - radius;
     out[make_uint2(threadIdx.x, 0)] = __expf(-(x * x) / (2 * delta * delta));
 }
@@ -357,10 +419,9 @@ __global__ void trackKernel(Image<TrackData> output,
     ((float3 *) row.J)[1] = cross(projectedVertex, referenceNormal);
 }
 
-__global__ void reduceKernel(float * out, const Image<TrackData> J,
-                             const uint2 size) {
-    __shared__
-            float S[112][32]; // this is for the final accumulation
+__global__ void reduceKernel(float * out, const Image<TrackData> J,const uint2 size) 
+{
+    __shared__ float S[112][32]; // this is for the final accumulation
     const uint sline = threadIdx.x;
 
     float sums[32];
@@ -370,10 +431,13 @@ __global__ void reduceKernel(float * out, const Image<TrackData> J,
     for (uint i = 0; i < 32; ++i)
         sums[i] = 0;
 
-    for (uint y = blockIdx.x; y < size.y; y += gridDim.x) {
-        for (uint x = sline; x < size.x; x += blockDim.x) {
+    for (uint y = blockIdx.x; y < size.y; y += gridDim.x)
+    {
+        for (uint x = sline; x < size.x; x += blockDim.x)
+        {
             const TrackData & row = J[make_uint2(x, y)];
-            if (row.result < 1) {
+            if (row.result < 1)
+            {
                 info[1] += row.result == -4 ? 1 : 0;
                 info[2] += row.result == -5 ? 1 : 0;
                 info[3] += row.result > -4 ? 1 : 0;
@@ -425,7 +489,9 @@ __global__ void reduceKernel(float * out, const Image<TrackData> J,
 
     __syncthreads();            // wait for everyone to finish
 
-    if (sline < 32) { // sum up columns and copy to global memory in the final 32 threads
+    if (sline < 32)
+    {
+        // sum up columns and copy to global memory in the final 32 threads
         for (unsigned i = 1; i < blockDim.x; ++i)
             S[0][sline] += S[i][sline];
         out[sline + blockIdx.x * 32] = S[0][sline];
@@ -439,7 +505,8 @@ Matrix4 operator*(const Matrix4 & A, const Matrix4 & B) {
     return R;
 }
 
-Matrix4 inverse(const Matrix4 & A) {
+Matrix4 inverse(const Matrix4 & A)
+{
     static TooN::Matrix<4, 4, float> I = TooN::Identity;
     TooN::Matrix<4, 4, float> temp = TooN::wrapMatrix<4, 4>(&A.data[0].x);
     Matrix4 R;
@@ -447,7 +514,8 @@ Matrix4 inverse(const Matrix4 & A) {
     return R;
 }
 
-std::ostream & operator<<(std::ostream & out, const Matrix4 & m) {
+std::ostream & operator<<(std::ostream & out, const Matrix4 & m)
+{
     for (unsigned i = 0; i < 4; ++i)
         out << m.data[i].x << "  " << m.data[i].y << "  " << m.data[i].z << "  "
             << m.data[i].w << "\n";
@@ -456,7 +524,8 @@ std::ostream & operator<<(std::ostream & out, const Matrix4 & m) {
 
 
 
-int printCUDAError() {
+int printCUDAError()
+{
     cudaError_t error = cudaGetLastError();
     if (error)
         std::cout << cudaGetErrorString(error) << std::endl;
@@ -480,6 +549,8 @@ std::vector<Image<float3, Device> > inputVertex, inputNormal;
 std::vector<Image<float, Device> > scaledDepth;
 
 Image<float, Device> rawDepth;
+Image<uchar3, Device> rawRgb;
+
 Image<float, HostDevice> output;
 
 Image<float, Device> gaussian;
@@ -490,7 +561,8 @@ Image<uchar4, HostDevice> lightModel, trackModel, depthModel;
 
 static bool firstAcquire = true;
 
-void Kfusion::languageSpecificConstructor() {
+void Kfusion::languageSpecificConstructor()
+{
     if (getenv("KERNEL_TIMINGS"))
         print_kernel_timing = true;
     if (firstAcquire)
@@ -508,6 +580,7 @@ void Kfusion::languageSpecificConstructor() {
     vertex.alloc(cs);
     normal.alloc(cs);
     rawDepth.alloc(cs);
+    rawRgb.alloc(cs);
     scaledDepth.resize(iterations.size());
     inputVertex.resize(iterations.size());
     inputNormal.resize(iterations.size());
@@ -619,14 +692,12 @@ bool checkPoseKernel(sMatrix4 & pose, sMatrix4 oldPose, const float * output,
 
 }
 
-bool Kfusion::preprocessing2(const float *inputDepth, const uint2 inputSize) 
+bool Kfusion::preprocessing2(const float *inputDepth,const uchar3 *inputRgb, const uint2 inputSize)
 {
     uint2 s = make_uint2(inputSize.x, inputSize.y);
-
-    //Image<uint16_t, Ref> myDepthImage(s,(void*)inputDepth);
     Image<uint16_t, HostDevice> myDepthImage(s);
-    cudaMemcpy(rawDepth.data(), inputDepth, s.x * s.y * sizeof(float),
-               cudaMemcpyHostToHost);
+    cudaMemcpy(rawDepth.data(), inputDepth, s.x * s.y * sizeof(float),cudaMemcpyHostToHost);
+    cudaMemcpy(rawRgb.data(), inputRgb, s.x * s.y * sizeof(uchar3),cudaMemcpyHostToHost);
 
     dim3 grid = divup(make_uint2(computationSize.x, computationSize.y), imageBlock);
     TICK("bilateral_filter");
@@ -722,7 +793,6 @@ bool Kfusion::tracking(float4 sk, float icp_threshold, uint tracking_rate, uint 
         }
     }
     return checkPoseKernel(pose, oldPose, output.data(), computationSize,track_threshold);
-
 }
 
 bool Kfusion::raycasting(float4 sk, float mu, uint frame) {
@@ -738,22 +808,23 @@ bool Kfusion::raycasting(float4 sk, float mu, uint frame) {
     }
 
     return doRaycast;
-
 }
 
-bool Kfusion::integration(float4 sk, uint integration_rate,	float mu, uint frame) {
-
+bool Kfusion::integration(float4 sk, uint integration_rate,	float mu, uint frame)
+{
     float4 k = make_float4(sk.x, sk.y, sk.z, sk.w);
 
-    bool doIntegrate = checkPoseKernel(pose, oldPose, output.data(),
-                                       computationSize, track_threshold);
+    bool doIntegrate = checkPoseKernel(pose, oldPose, output.data(),computationSize, track_threshold);
 
-    if ((doIntegrate && ((frame % integration_rate) == 0)) || (frame <= 3)) {
+    if ((doIntegrate && ((frame % integration_rate) == 0)) || (frame <= 3))
+    {
         TICK("integrate");
-        integrateKernel<<<divup(dim3(volume.size.x, volume.size.y), imageBlock), imageBlock>>>( volume, rawDepth, inverse(Matrix4(&pose)), getCameraMatrix(k), mu, maxweight );
+        integrateKernel<<<divup(dim3(volume.size.x, volume.size.y), imageBlock), imageBlock>>>( volume, rawDepth,rawRgb, inverse(Matrix4(&pose)), getCameraMatrix(k), mu, maxweight );
         TOCK();
         doIntegrate = true;
-    } else {
+    }
+    else
+    {
         doIntegrate = false;
     }
 
@@ -762,8 +833,8 @@ bool Kfusion::integration(float4 sk, uint integration_rate,	float mu, uint frame
 }
 
 
-void generateTriangles(std::vector<float3>& triangles,  const Volume volume, short2 *hostData) {
-
+void generateTriangles(std::vector<float3>& triangles,  const Volume volume, short2 *hostData)
+{
     for(unsigned int z=0; z<volume.size.z-1; z++)
     {
         for(unsigned int y=0; y<volume.size.y-1; y++)
@@ -774,16 +845,19 @@ void generateTriangles(std::vector<float3>& triangles,  const Volume volume, sho
                 const uint8_t cubeIndex = getCubeIndex(x,y,z,volume, hostData);
                 const int* tri = triTable[cubeIndex];
 
-                for(int i=0; i<5; i++) {
-                    if(tri[3*i]<0) break;
+                for(int i=0; i<5; i++)
+                {
+                    if(tri[3*i]<0)
+                        break;
+
                     float3 p1 = calcPtInterpolate(tri[3*i],x, y, z, volume,hostData);
                     float3 p2 = calcPtInterpolate(tri[3*i+1],x, y, z, volume,hostData);
                     float3 p3 = calcPtInterpolate(tri[3*i+2],x, y, z, volume,hostData);
+
                     triangles.push_back(p1);
                     triangles.push_back(p2);
                     triangles.push_back(p3);
                 }
-
             }
         }
     }
@@ -810,39 +884,43 @@ void Kfusion::getVertices(std::vector<float3> &vertices)
     free(hostData);
 }
 
-void Kfusion::dumpVolume(const char *  filename) {
+void Kfusion::dumpVolume(const char *  filename)
+{
     std::ofstream fDumpFile;
-
-    if (filename == NULL) {
+    if (filename == NULL)
+    {
         return;
     }
 
     cout << "Dumping the volumetric representation on file: " << filename << endl;
     fDumpFile.open(filename, ios::out | ios::binary);
-    if (fDumpFile.fail()) {
+    if (fDumpFile.fail())
+    {
         cout << "Error opening file: " << filename << endl;
         exit(1);
     }
 
     // Retrieve the volumetric representation data from the GPU
-    short2 *hostData = (short2 *) malloc(
-                           volume.size.x * volume.size.y * volume.size.z * sizeof(short2));
+    short2 *hostData = (short2 *) malloc(volume.size.x * volume.size.y * volume.size.z * sizeof(short2));
+
     if (cudaMemcpy(hostData, volume.data,
                    volume.size.x * volume.size.y * volume.size.z * sizeof(short2),
-                   cudaMemcpyDeviceToHost) != cudaSuccess) {
-        cout << "Error reading volumetric representation data from the GPU. "
-             << endl;
+                   cudaMemcpyDeviceToHost) != cudaSuccess)
+    {
+        cout << "Error reading volumetric representation data from the GPU. "<< endl;
         exit(1);
     }
 
     // Dump on file without the y component of the short2 variable
-    for (int i = 0; i < volume.size.x * volume.size.y * volume.size.z; i++) {
+    for (int i = 0; i < volume.size.x * volume.size.y * volume.size.z; i++)
+    {
         fDumpFile.write((char *) (hostData + i), sizeof(short));
     }
 
     fDumpFile.close();
 
-    if (hostData) {
+    if (hostData)
+    {
         free(hostData);
         hostData = NULL;
     }
@@ -850,18 +928,55 @@ void Kfusion::dumpVolume(const char *  filename) {
 
 void Kfusion::renderVolume(uchar4 * out,
                            uint2 outputSize, int frame, int rate,
-                           float4 k, float largestep) {
+                           float4 k, float largestep)
+{
     if (frame % rate != 0)
         return;
     TICK("renderVolume");
     dim3 block(16,16);
     //So We initially create a fixed size image (possibly 640x480) but we need to set up the dimensions for
     //the image as the CUDA accesss by row, column
-    if((outputSize.x != lightModel.size.x) || (outputSize.y != lightModel.size.y)) {
+    if((outputSize.x != lightModel.size.x) || (outputSize.y != lightModel.size.y))
+    {
         lightModel.size.x = outputSize.x;
         lightModel.size.y = outputSize.y;
     }
-    renderVolumeKernel<<<divup(lightModel.getDeviceImage().size, block), block>>>( lightModel.getDeviceImage(),volume,Matrix4(this->viewPose) * getInverseCameraMatrix(make_float4(k.x,k.y,k.z,k.w)) , nearPlane, farPlane, volume.dim.x/volume.size.x, largestep,light, ambient );
+    renderVolumeKernel<<<divup(lightModel.getDeviceImage().size, block), block>>>( lightModel.getDeviceImage(),
+                                                                                   volume,
+                                                                                   Matrix4(this->viewPose)*getInverseCameraMatrix(make_float4(k.x,k.y,k.z,k.w)),
+                                                                                   nearPlane,
+                                                                                   farPlane,
+                                                                                   volume.dim.x/volume.size.x,
+                                                                                   largestep,
+                                                                                   light,
+                                                                                   ambient);
+    TOCK();
+    cudaMemcpy(out, lightModel.getDeviceImage().data(),
+               outputSize.x * outputSize.y * sizeof(uchar4),
+               cudaMemcpyDeviceToHost);
+}
+
+void Kfusion::renderImage(uchar4 * out,
+                           uint2 outputSize,
+                           float4 k, float largestep)
+{
+    TICK("renderImage");
+    dim3 block(16,16);
+    //So We initially create a fixed size image (possibly 640x480) but we need to set up the dimensions for
+    //the image as the CUDA accesss by row, column
+    if((outputSize.x != lightModel.size.x) || (outputSize.y != lightModel.size.y))
+    {
+        lightModel.size.x = outputSize.x;
+        lightModel.size.y = outputSize.y;
+    }
+
+    renderImageKernel<<<divup(lightModel.getDeviceImage().size, block), block>>>( lightModel.getDeviceImage(),
+                                                                                   volume,
+                                                                                   Matrix4(this->viewPose)*getInverseCameraMatrix(make_float4(k.x,k.y,k.z,k.w)),
+                                                                                   nearPlane,
+                                                                                   farPlane,
+                                                                                   volume.dim.x/volume.size.x,
+                                                                                   largestep);
     TOCK();
     cudaMemcpy(out, lightModel.getDeviceImage().data(),
                outputSize.x * outputSize.y * sizeof(uchar4),
@@ -869,7 +984,8 @@ void Kfusion::renderVolume(uchar4 * out,
 }
 
 void Kfusion::renderTrack(uchar4 * out,
-                          uint2 outputSize) {
+                          uint2 outputSize)
+{
     TICK("renderTrack");
     dim3 block(32,16);
     renderTrackKernel<<<divup(trackModel.getDeviceImage().size, block), block>>>( trackModel.getDeviceImage(), reduction );
@@ -878,7 +994,8 @@ void Kfusion::renderTrack(uchar4 * out,
 }
 
 void Kfusion::renderDepth(uchar4 * out,
-                          uint2 outputSize) {
+                          uint2 outputSize)
+{
     TICK("renderDepthKernel");
     dim3 block(32,16);
     renderDepthKernel<<<divup(depthModel.getDeviceImage().size, block), block>>>( depthModel.getDeviceImage(), rawDepth, nearPlane, farPlane );
@@ -887,12 +1004,15 @@ void Kfusion::renderDepth(uchar4 * out,
 }
 void Kfusion::computeFrame(const ushort * inputDepth, const uint2 inputSize,
                            float4 k, uint integration_rate, uint tracking_rate,
-                           float icp_threshold, float mu, const uint frame) {
+                           float icp_threshold, float mu, const uint frame)
+{
     preprocessing(inputDepth, inputSize);
     _tracked = tracking(k, icp_threshold, tracking_rate, frame);
     _integrated = integration(k, integration_rate, mu, frame);
     raycasting(k, mu, frame);
 }
-void synchroniseDevices() {
+
+void synchroniseDevices()
+{
     cudaDeviceSynchronize();
 }
