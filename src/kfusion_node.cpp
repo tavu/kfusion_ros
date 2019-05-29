@@ -18,13 +18,18 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <sensor_msgs/CameraInfo.h>
 
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+
 #define CAM_INFO_TOPIC "/camera/depth/camera_info"
 #define RGB_TOPIC "/camera/rgb/image_rect_color"
 #define DEPTH_TOPIC "/camera/depth/image_rect"
 
-#define PUB_VOLUME_TOPIC "/kfusion/volume_rendered"
-#define PUB_ODOM_TOPIC "/kfusion/odom"
-#define PUB_POINTS_TOPIC "/kfusion/pointCloud"
+#define PUB_VOLUME_TOPIC "/kfustion/volume_rendered"
+#define PUB_ODOM_TOPIC "/kfustion/odom"
+#define PUB_POINTS_TOPIC "/kfustion/pointCloud"
+#define PUB_IMAGE_TOPIC "/kfustion/volume_rgb"
 
 #define DEPTH_FRAME "camera_rgb_optical_frame"
 #define VO_FRAME "visual_odom"
@@ -104,8 +109,9 @@ void initKFusion();
 void publishVolume();
 void publishOdom();
 void publishPoints();
+void depthCallback(const sensor_msgs::ImageConstPtr &depth);
+void imageCallback(const sensor_msgs::ImageConstPtr &rgb,const sensor_msgs::ImageConstPtr &depth);
 geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans);
-
 
 geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans)
 {
@@ -148,6 +154,20 @@ void readKfusionParams(ros::NodeHandle &n_p)
     n_p.getParam("icp_threshold",par.icp_threshold);
 
     params=par;
+}
+
+void imageCallback(const sensor_msgs::ImageConstPtr &rgb,const sensor_msgs::ImageConstPtr &depth)
+{
+    if(strcmp(rgb->encoding.c_str(), "rgb8")==0) //rgb8
+    {
+        memcpy(inputRGB,rgb->data.data(),params.inputSize.y*params.inputSize.x*sizeof(uchar)*3 );
+        depthCallback(depth);
+    }
+    else
+    {
+        ROS_ERROR("Not supported rgb format.");
+        return;
+    }
 }
 
 void odomCallback(nav_msgs::OdometryConstPtr odom)
@@ -255,11 +275,9 @@ void odomCallback(nav_msgs::OdometryConstPtr odom)
 
     if(publish_volume)
     {
-        kfusion->renderVolume(volumeRender,
-                            params.computationSize, 
-                            frame, 
-                            params.rendering_rate, 
-                            params.camera, 
+        kfusion->renderImage(volumeRender,
+                            params.computationSize,
+                            params.camera,
                             0.75 * params.mu);
         publishVolume();
     }
@@ -287,7 +305,7 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
             inputDepthFl=new float[params.inputSize.x * params.inputSize.y];
             
         memcpy(inputDepthFl,depth->data.data(),params.inputSize.y*params.inputSize.x*sizeof(float) );
-        kfusion->preprocessing2(inputDepthFl, params.inputSize);
+        kfusion->preprocessing2(inputDepthFl,inputRGB, params.inputSize);
     }
     else if(strcmp(depth->encoding.c_str(), "16UC1")==0) //16UC1
     {
@@ -376,7 +394,7 @@ void publishVolume()
     image.is_bigendian=0;
     image.step=step_size*image.width;
     image.header.frame_id=std::string("kfusion_volume");   
-    image.encoding=std::string("bgra8");
+    image.encoding=std::string("rgba8");
     
     image.header.frame_id=std::string("kfusion volume");
     uchar *ptr=(uchar*)volumeRender;
@@ -594,10 +612,16 @@ int main(int argc, char **argv)
     }while(false);
 
     ros::Subscriber odom_sub = n_p.subscribe(odom_in_topic, odom_delay+1, odomCallback);
-    ROS_INFO("Waiting depth message");
+    ROS_INFO("Waiting messages");
 
-    image_transport::ImageTransport it(n_p);
-    image_transport::Subscriber sub = it.subscribe(depth_topic, 1, depthCallback);
-    
+    message_filters::Subscriber<sensor_msgs::Image> rgb_sub(n_p, rgb_topic, 1);
+    message_filters::Subscriber<sensor_msgs::Image> depth_sub(n_p, depth_topic, 1);
+
+
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> MySyncPolicy;
+
+    message_filters::Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), rgb_sub, depth_sub);
+    sync.registerCallback(boost::bind(&imageCallback, _1, _2));
+
     ros::spin();
 }

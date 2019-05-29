@@ -65,7 +65,8 @@ TooN::Vector<6> solve(const TooN::Vector<27, T, A> & vals) {
 
 /// OBJ ///
 
-class Kfusion {
+class Kfusion
+{
     private:
         uint2 computationSize;
         float step;
@@ -80,16 +81,15 @@ class Kfusion {
         bool _integrated = false;
     public:
 
-        Kfusion(uint2 inputSize, uint3 volumeResolution, float3 volumeDimensions,
-                float3 initPose, std::vector<int> & pyramid) :
-            computationSize(make_uint2(inputSize.x, inputSize.y)) {
-
-
+        Kfusion(uint2 inputSize, uint3 volumeResolution, float3 volumeDimensions,float3 initPose, std::vector<int> & pyramid)
+                :computationSize(make_uint2(inputSize.x, inputSize.y))
+        {
             this->volumeDimensions = volumeDimensions;
             this->volumeResolution = volumeResolution;
             pose = toMatrix4(
                        TooN::SE3<float>(
-                           TooN::makeVector(initPose.x, initPose.y, initPose.z, 0, 0, 0)));
+                       TooN::makeVector(initPose.x, initPose.y, initPose.z, 0, 0, 0)));
+
             this->iterations.clear();
             for (std::vector<int>::iterator it = pyramid.begin();
                  it != pyramid.end(); it++) {
@@ -135,7 +135,7 @@ class Kfusion {
 
         bool preprocessing(const ushort * inputDepth,
                            const uint2 inputSize);
-        bool preprocessing2(const float *inputDepth, const uint2 inputSize) ;
+        bool preprocessing2(const float *inputDepth,const uchar3 *rgb, const uint2 inputSize) ;
         
         bool tracking(float4 k, float icp_threshold,
                       uint tracking_rate, uint frame);
@@ -144,9 +144,9 @@ class Kfusion {
                          float mu, uint frame);
 
         void dumpVolume(const  char * filename);
-        void renderVolume(uchar4 * out,
-                          const uint2 outputSize, int, int,
-                          float4 k, float largestep);
+        void renderVolume(uchar4 * out,const uint2 outputSize, int, int,float4 k, float largestep);
+        void renderImage(uchar4 * out,const uint2 outputSize,float4 k, float largestep);
+
         void renderTrack(uchar4 * out,
                          const uint2 outputSize);
         void renderDepth(uchar4 * out,
@@ -163,25 +163,31 @@ class Kfusion {
             return deltaPose;
         }
 
-        void setPose(const sMatrix4 pose_) {
+        void setPose(const sMatrix4 pose_)
+        {
             pose=pose_;
         }
-        void setViewPose(sMatrix4 *value = NULL) {
+        void setViewPose(sMatrix4 *value = NULL)
+        {
             if (value == NULL)
                 viewPose = &pose;
             else
                 viewPose = value;
         }
-        sMatrix4 *getViewPose() {
+        sMatrix4 *getViewPose()
+        {
             return (viewPose);
         }
-        float3 getModelDimensions() {
+        float3 getModelDimensions()
+        {
             return (volumeDimensions);
         }
-        uint3 getModelResolution() {
+        uint3 getModelResolution()
+        {
             return (volumeResolution);
         }
-        uint2 getComputationResolution() {
+        uint2 getComputationResolution()
+        {
             return (computationSize);
         }
 
