@@ -13,6 +13,8 @@ Video: www.youtube.com/watch?v=mLdNwHl9cgo&feature=youtu.be
 * Toon (https://github.com/edrosten/TooN.git)
 * Cuda 9 and newer
 
+## Optional
+* Serow (https://github.com/mrsp/serow)
 
 ## Installing
 * git clone https://github.com/tavu/kfusion_ros.git
