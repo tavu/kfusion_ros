@@ -326,8 +326,8 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
     odom_rec=0;
     if(! track_success)
        ROS_ERROR("Tracking faild");
-    else
-        publishOdom();
+
+    publishOdom();
 }
 
 void camInfoCallback(sensor_msgs::CameraInfoConstPtr msg)
