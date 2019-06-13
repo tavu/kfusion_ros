@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <launch>    
-        
+<!--     uncomment line bellow for simulation time -->
+<!--     <param name="use_sim_time" value="true" /> -->
+    
 <!--     static_transform_publisher x y z qx qy qz qw frame_id child_frame_id  period_in_ms -->
      <node pkg="tf" type="static_transform_publisher" name="tf_base_link_to_torso" args="0 0 0   0 0 0 1 base_link torso 100" /> 
      <node pkg="tf" type="static_transform_publisher" name="tf_head_to_cam" args="0 0 0.1 0 0 0 1 Head camera_rgb_frame 1000" /> 

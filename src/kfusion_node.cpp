@@ -26,13 +26,12 @@
 #define RGB_TOPIC "/camera/rgb/image_rect_color"
 #define DEPTH_TOPIC "/camera/depth/image_rect"
 
-#define PUB_VOLUME_TOPIC "/kfustion/volume_rendered"
-#define PUB_ODOM_TOPIC "/kfustion/odom"
-#define PUB_POINTS_TOPIC "/kfustion/pointCloud"
-#define PUB_IMAGE_TOPIC "/kfustion/volume_rgb"
+#define PUB_VOLUME_TOPIC "/kfusion/volume_rendered"
+#define PUB_ODOM_TOPIC "/kfusion/odom"
+#define PUB_POINTS_TOPIC "/kfusion/pointCloud"
+#define PUB_IMAGE_TOPIC "/kfusion/volume_rgb"
 
 #define DEPTH_FRAME "camera_rgb_optical_frame"
-#define VO_FRAME "visual_odom"
 #define ODOM_FRAME "odom"
 #define BASE_LINK "base_link"
 
@@ -97,7 +96,7 @@ Matrix4 pose_old;
 bool hasPoseOld=false;
 
 //frames
-std::string depth_frame,vo_frame,base_link_frame,odom_frame;
+std::string depth_frame,base_link_frame,odom_frame;
 
 //Transformations
 geometry_msgs::TransformStamped odom_to_vo,vo_to_odom;
@@ -540,11 +539,7 @@ int main(int argc, char **argv)
     if(!n_p.getParam("publish_points_rate", publish_points_rate))
     {
         publish_points_rate=PUBLISH_POINT_RATE;
-    } 
-    if(!n_p.getParam("vo_frame", vo_frame))
-    {
-        vo_frame=VO_FRAME;
-    }    
+    }
     if(!n_p.getParam("depth_frame", depth_frame))
     {
         depth_frame=DEPTH_FRAME;
