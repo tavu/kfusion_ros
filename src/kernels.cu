@@ -103,35 +103,19 @@ __global__ void renderVolumeKernel(Image<uchar4> render, const Volume volume,
     }
 }
 
-__global__ void renderImageKernel(Image<uchar4> render, const Volume volume,
-                                   const Matrix4 view, const float nearPlane, const float farPlane,
-                                   const float step, const float largestep)
+__global__ void renderImageKernel(Image<uchar4> render, const Volume volume,Image<float3> vert,Image<float3> norm)
 {    
     const uint2 pos = thr2pos2();
-    float4 hit = raycast(volume, pos, view, nearPlane, farPlane, step,largestep);
-    if (hit.w > 0)
-    {
-        const float3 pos = make_float3(hit);
-        const float3 surfNorm = volume.grad(pos);
-        if (length(surfNorm) > 0)
-        {
 
-            const float3 pos = make_float3(hit);            
-            const float3 frgb = volume.rgb_interp( make_float3(pos.x,pos.y,pos.z) );
-            render.el()=make_uchar4(frgb.x ,
-                                    frgb.y ,
-                                    frgb.z ,
-                                    0);
-        }
-        else
-        {
-            render.el() = make_uchar4(0, 0, 0, 0);
-        }
+    if(norm[pos].x != INVALID)
+    {
+        const float3 frgb = volume.rgb_interp(vert[pos]);
+        render.el()=make_uchar4(frgb.x ,frgb.y ,frgb.z ,0);
     }
     else
     {
         render.el() = make_uchar4(0, 0, 0, 0);
-    }
+    }    
 }
 
 __global__ void initVolumeKernel(Volume volume, const float2 val)
@@ -969,7 +953,8 @@ void Kfusion::renderImage(uchar4 * out,
         lightModel.size.x = outputSize.x;
         lightModel.size.y = outputSize.y;
     }
-
+    renderImageKernel<<<divup(lightModel.getDeviceImage().size, block), block>>>( lightModel.getDeviceImage(),volume,vertex,normal);
+    /*
     renderImageKernel<<<divup(lightModel.getDeviceImage().size, block), block>>>( lightModel.getDeviceImage(),
                                                                                    volume,
                                                                                    Matrix4(this->viewPose)*getInverseCameraMatrix(make_float4(k.x,k.y,k.z,k.w)),
@@ -977,6 +962,7 @@ void Kfusion::renderImage(uchar4 * out,
                                                                                    farPlane,
                                                                                    volume.dim.x/volume.size.x,
                                                                                    largestep);
+    */
     TOCK();
     cudaMemcpy(out, lightModel.getDeviceImage().data(),
                outputSize.x * outputSize.y * sizeof(uchar4),
