@@ -5,6 +5,7 @@
 #include <sensor_msgs/PointCloud.h>
 #include <geometry_msgs/Point32.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <nav_msgs/Path.h>
 
 #include <image_transport/image_transport.h>
 #include <nav_msgs/Odometry.h>
@@ -33,6 +34,10 @@
 
 #define PUBLISH_POINT_RATE 10
 
+#define PUB_ODOM_PATH_TOPIC "/kfusion/odom_path"
+nav_msgs::Path odomPath;
+ros::Publisher odom_path_pub ;
+
 typedef unsigned char uchar;
 
 //KFusion Params
@@ -55,6 +60,47 @@ typedef struct
     
 } kparams_t;
 kparams_t params;
+
+
+;
+/*
+0,-1,  0 ,0,
+0, 0, -1, 0,
+1, 0,  0, 0,
+0, 0,  0, 1 
+*/
+
+inline sMatrix4 fromVisionCord(const sMatrix4 &mat)
+{
+    static bool firstTime=true;
+    static sMatrix4 T_B_P,invT_B_P;
+    if(firstTime)
+    {
+        T_B_P.data[0].x=0;
+        T_B_P.data[0].y=-1;
+        T_B_P.data[0].z=0;
+        T_B_P.data[0].w=0;
+        
+        T_B_P.data[1].x=0;
+        T_B_P.data[1].y=0;
+        T_B_P.data[1].z=-1;
+        T_B_P.data[1].w=0;
+        
+        T_B_P.data[2].x=1;
+        T_B_P.data[2].y=0;
+        T_B_P.data[2].z=0;
+        T_B_P.data[2].w=0;
+        
+        T_B_P.data[3].x=0;
+        T_B_P.data[3].y=0;
+        T_B_P.data[3].z=0;
+        T_B_P.data[3].w=1;
+        invT_B_P=inverse(T_B_P);
+        firstTime=false;
+    }
+    
+    return invT_B_P*mat*T_B_P;
+}
 
 //Buffers
 uint16_t *inputDepth=0;
@@ -106,6 +152,22 @@ void publishOdom();
 void publishPoints();
 geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans);
 
+void publishOdomPath(geometry_msgs::Pose &p)
+{
+//     nav_msgs::Path path;
+    
+    geometry_msgs::PoseStamped ps;
+    ps.header.stamp = ros::Time::now();
+    ps.header.frame_id = VO_FRAME;
+    ps.pose=p;
+    odomPath.poses.push_back(ps);
+    
+    nav_msgs::Path newPath=odomPath;
+    newPath.header.stamp = ros::Time::now();
+    newPath.header.frame_id = VO_FRAME;
+    
+    odom_path_pub.publish(newPath);
+}
 
 geometry_msgs::Pose transform2pose(const geometry_msgs::Transform &trans)
 {
@@ -253,7 +315,7 @@ void odomCallback(nav_msgs::OdometryConstPtr odom)
     //Raycasting
     kfusion->raycasting(params.camera, params.mu, frame);
 
-    if(publish_volume)
+    if(publish_volume && false)
     {
         kfusion->renderVolume(volumeRender,
                             params.computationSize, 
@@ -265,7 +327,7 @@ void odomCallback(nav_msgs::OdometryConstPtr odom)
     }
     
     
-    if(publish_points && frame % publish_points_rate ==0)
+    if(publish_points && frame % publish_points_rate ==0 && false)
          publishPoints();
 
     frame++;
@@ -311,6 +373,32 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
        ROS_ERROR("Tracking faild");
     else
         publishOdom();
+    
+    //Integrate
+    if(!kfusion->integration(params.camera,
+                             params.integration_rate,
+                             params.mu, frame))
+        ROS_ERROR("integration faild");
+
+    //Raycasting
+    kfusion->raycasting(params.camera, params.mu, frame);
+
+    if(publish_volume && false)
+    {
+        kfusion->renderVolume(volumeRender,
+                            params.computationSize, 
+                            frame, 
+                            params.rendering_rate, 
+                            params.camera, 
+                            0.75 * params.mu);
+        publishVolume();
+    }
+    
+    
+    if(publish_points && frame % publish_points_rate ==0 && false)
+         publishPoints();
+
+    frame++;
 }
 
 void camInfoCallback(sensor_msgs::CameraInfoConstPtr msg)
@@ -386,7 +474,10 @@ void publishVolume()
 
 void publishOdom()
 {
-    Matrix4 pose =  kfusion->getPose();
+    Matrix4 kpose =  kfusion->getPose();
+    
+    sMatrix4 pose=fromVisionCord(kpose);
+    
     tf::Vector3 vec[3];
     for(int i=0;i<3;i++)
     {
@@ -402,44 +493,29 @@ void publishOdom()
 
     nav_msgs::Odometry odom;
     geometry_msgs::Pose odom_pose;
-    geometry_msgs::TransformStamped cam_to_vo;
-    cam_to_vo.header.frame_id=depth_frame;
-    cam_to_vo.child_frame_id=base_link_frame;
-
+    odom_pose.position.x=pose.data[0].w;
+    odom_pose.position.y=pose.data[1].w;
+    odom_pose.position.z=pose.data[2].w;
+    odom_pose.orientation.x=q.getX();
+    odom_pose.orientation.y=q.getY();
+    odom_pose.orientation.z=q.getZ();
+    odom_pose.orientation.w=q.getW();
+    
     odom.header.stamp = ros::Time::now();
-
-    cam_to_vo.transform.translation.x = pose.data[0].w-params.volume_direction.x;
-    cam_to_vo.transform.translation.y = pose.data[1].w-params.volume_direction.y;
-    cam_to_vo.transform.translation.z = pose.data[2].w-params.volume_direction.z;
-
-    cam_to_vo.transform.rotation.x=q.getX();
-    cam_to_vo.transform.rotation.y=q.getY();
-    cam_to_vo.transform.rotation.z=q.getZ();
-    cam_to_vo.transform.rotation.w=q.getW();
 
     //set velocity to zero    
     odom.twist.twist.linear.x = 0;
     odom.twist.twist.linear.y = 0;
     odom.twist.twist.angular.z = 0;
     
-    odom.header.frame_id = odom_frame;
-    odom.child_frame_id = "visual_link";
-
-    odom_pose=transform2pose(base_to_cam.transform);
-    try
-    {
-        tf2::doTransform(odom_pose,odom_pose, cam_to_vo);
-        tf2::doTransform(odom_pose,odom_pose, vo_to_odom);
-    }
-    catch (tf2::TransformException &ex)
-    {
-
-        ROS_WARN("Odom transformation failure %s\n", ex.what()); //Print exception which was caught
-        return;
-    }
+    odom.header.frame_id = vo_frame;
+    odom.child_frame_id = depth_frame;
 
     odom.pose.pose=odom_pose;
     odom_pub.publish(odom);
+    
+    publishOdomPath(odom_pose);    
+
 }
 
 void publishPoints()
@@ -503,14 +579,14 @@ int main(int argc, char **argv)
     {
         rgb_topic=std::string(RGB_TOPIC);
     }
-    if(!n_p.getParam("odom_input_topic", odom_in_topic))
-    {
-        odom_in_topic=std::string(PUB_ODOM_TOPIC);
-    }    
-    if(!n_p.getParam("odom_delay", odom_delay))
-    {
-        odom_delay=3;
-    } 
+//     if(!n_p.getParam("odom_input_topic", odom_in_topic))
+//     {
+//         odom_in_topic=std::string(PUB_ODOM_TOPIC);
+//     }    
+//     if(!n_p.getParam("odom_delay", odom_delay))
+//     {
+//         odom_delay=3;
+//     } 
     if(!n_p.getParam("publish_volume", publish_volume))
     {
         publish_volume=true;
@@ -563,7 +639,9 @@ int main(int argc, char **argv)
             break;
         }
     }
+    ROS_INFO("Camera info received.");
 
+#if 0
     ROS_INFO("Waiting tf transformation");
     do
     {
@@ -592,8 +670,11 @@ int main(int argc, char **argv)
         tr=tr.inverse();
         base_to_cam.transform=tf2::toMsg(tr);
     }while(false);
+#endif
 
-    ros::Subscriber odom_sub = n_p.subscribe(odom_in_topic, odom_delay+1, odomCallback);
+    odom_path_pub = n_p.advertise<nav_msgs::Path>(PUB_ODOM_PATH_TOPIC, 50);
+
+//     ros::Subscriber odom_sub = n_p.subscribe(odom_in_topic, odom_delay+1, odomCallback);
     ROS_INFO("Waiting depth message");
 
     image_transport::ImageTransport it(n_p);

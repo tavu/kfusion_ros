@@ -15,11 +15,11 @@ catkin_package(
 CATKIN_DEPENDS
 )
 
-find_package(TooN   REQUIRED)
-find_package(Eigen3   REQUIRED)
+# find_package(TooN   REQUIRED)
+# find_package(Eigen3   REQUIRED)
 
-#set(TOON_INCLUDE_PATHS "~/src/TooN")
-#set(EIGEN3_INCLUDE_DIR "~/src/eigen")
+set(TOON_INCLUDE_PATHS "$ENV{HOME}/src/TooN")
+set(EIGEN_INCLUDE_DIRS "/usr/local/include/eigen3")
 
 find_package(CUDA)
 SET( CUDA_PROPAGATE_HOST_FLAGS OFF ) 
