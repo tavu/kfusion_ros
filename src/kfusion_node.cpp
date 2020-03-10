@@ -315,7 +315,7 @@ void odomCallback(nav_msgs::OdometryConstPtr odom)
     //Raycasting
     kfusion->raycasting(params.camera, params.mu, frame);
 
-    if(publish_volume && false)
+    if(publish_volume )
     {
         kfusion->renderVolume(volumeRender,
                             params.computationSize, 
@@ -383,7 +383,7 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
     //Raycasting
     kfusion->raycasting(params.camera, params.mu, frame);
 
-    if(publish_volume && false)
+    if(publish_volume )
     {
         kfusion->renderVolume(volumeRender,
                             params.computationSize, 
@@ -395,7 +395,7 @@ void depthCallback(const sensor_msgs::ImageConstPtr &depth)
     }
     
     
-    if(publish_points && frame % publish_points_rate ==0 && false)
+    if(publish_points && frame % publish_points_rate ==0)
          publishPoints();
 
     frame++;
